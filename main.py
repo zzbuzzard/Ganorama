@@ -10,7 +10,7 @@ import argparse
 import os
 from os.path import join
 
-from util import get_extrinsic, get_intrinsic, plt_display, visualise_point_clouds, device
+from util import shared_args, get_extrinsic, get_intrinsic, plt_display, visualise_point_clouds, device
 from pers2equir import MultiPerspectiveWeighted
 
 fov = 90
@@ -133,25 +133,12 @@ def enforce_view_consistency(_m, _i, features: torch.Tensor) -> torch.Tensor:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Panorama generation using BigGAN.")
+    parser = shared_args("Panorama generation using BigGAN.")
 
-    parser.add_argument("-n", "--num_generations", type=int, default=4, help="Number of panoramas to generate.")
     parser.add_argument("-o", "--outdir", type=str, default="out/panorama", help="Directory to save outputs. Will be saved as [ctr].png for the least value of [ctr] which does not exist.")
-    parser.add_argument("-m", "--biggan_model", type=str, default="biggan-deep-256", choices=["biggan-deep-128", "biggan-deep-256", "biggan-deep-512"])
-    parser.add_argument("--z_mul", type=float, default=1., help="Latent vector multiplier for silly abstract results (greater than 1, for example 3, will produce interesting but nonsensical images).")
-    parser.add_argument("--class_mul", type=float, default=1., help="Class multiplier (see z_mul description).")
-    parser.add_argument("--truncation", type=float, default=0.5, help="Truncation value (see BigGAN paper).")
-    parser.add_argument("--model_dtype", type=str, choices=["float16", "float32"], default="float16",
-                        help="Model data type.")
     parser.add_argument("--panorama_width", type=int, default=2000)
     parser.add_argument("--panorama_height", type=int, default=1000)
-    parser.add_argument("--share_class", action="store_true", help="Share class across all gens inside each panorama.")
-    parser.add_argument("--no_share_z", dest="share_z", action="store_false", help="Do not share z across all gens inside each panorama.")
-    parser.set_defaults(share_z=True)
     parser.add_argument("--visualise_point_cloud", action="store_true", help="Visualise panorama as a point cloud, with overlaps from the multiple generations. Requires open3d to be installed.")
-    parser.add_argument("--class_names", type=str, default=None, help="Optional list of ImageNet class names to use. Separate with the '|' character. E.g. 'coral reef|tank'.")
-    parser.add_argument("--start_layer", type=int, default=2, help="Start layer for hook injection (0 to 12).")
-    parser.add_argument("--end_layer", type=int, default=7, help="End layer for hook injection (0 to 12).")
 
     args = parser.parse_args()
 

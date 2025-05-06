@@ -3,12 +3,30 @@ import math
 from typing import List
 import random
 import matplotlib.pyplot as plt
+import argparse
 try:
     import open3d as o3d
 except ImportError:
     print("[Warning] Could not import open3d, 3D visualisation will not work.")
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+
+def shared_args(desc: str) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument("-n", "--num_generations", type=int, default=4, help="Number of big images / panoramas to generate.")
+    parser.add_argument("-m", "--biggan_model", type=str, default="biggan-deep-256", choices=["biggan-deep-128", "biggan-deep-256", "biggan-deep-512"])
+    parser.add_argument("--z_mul", type=float, default=1., help="Latent vector multiplier for silly abstract results (greater than 1, for example 3, will produce interesting but nonsensical images).")
+    parser.add_argument("--class_mul", type=float, default=1., help="Class multiplier (see z_mul description).")
+    parser.add_argument("--truncation", type=float, default=0.5, help="Truncation value (see BigGAN paper).")
+    parser.add_argument("--model_dtype", type=str, choices=["float16", "float32"], default="float16", help="Model data type.")
+    parser.add_argument("--share_class", action="store_true", help="Share class across gens (within each image).")
+    parser.add_argument("--no_share_z", dest="share_z", action="store_false", help="Do not share z across gens (within each image).")
+    parser.set_defaults(share_z=True)
+    parser.add_argument("--start_layer", type=int, default=2, help="Start layer for hook injection (0 to 12).")
+    parser.add_argument("--end_layer", type=int, default=7, help="End layer for hook injection (0 to 12).")
+    parser.add_argument("--class_names", type=str, default=None, help="Optional list of ImageNet class names to use. Separate with the '|' character. E.g. 'coral reef|tank'.")
+    return parser
 
 
 def get_intrinsic(fov: float, H: int, W: int) -> torch.Tensor:
