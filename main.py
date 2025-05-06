@@ -1,9 +1,7 @@
 import torch
 from PIL import Image
 from pytorch_pretrained_biggan import BigGAN, one_hot_from_names, truncated_noise_sample
-from tqdm import tqdm
 import torchvision.transforms.functional as trf
-import matplotlib.pyplot as plt
 import numpy as np
 import math
 import torch.nn.functional as F
@@ -84,7 +82,7 @@ def enforce_view_consistency(_m, _i, features: torch.Tensor) -> torch.Tensor:
     Ps = [K @ pose for pose in inverse_poses]  # List of 3 x 4 - complete camera matrix
 
     # Compute 3D positions of all features
-    positions3d = get_3d_points(B, H, W)
+    positions3d = get_3d_points(H, W)
 
     # The output will be aggregated in new_out via sum, also tracking per-pixel counts to allow mean
     new_out = features.clone()
@@ -120,12 +118,12 @@ def enforce_view_consistency(_m, _i, features: torch.Tensor) -> torch.Tensor:
             new_out[i, :, valid_inds] += sampled_features[:, valid_inds]
             counts[i, :, valid_inds] += 1
 
-            # TODO: Remove debug stuff
-            c = valid_inds.sum().item()
-            if c > 0 and H > 128:
-                print(f"{i} with {j}:", c, "/", H*W, "=", c/(H*W))
-                plt_display(features, i, j, sampled_features, valid_inds)
-                input()
+            # For creating assets/explain.png
+            # c = valid_inds.sum().item()
+            # if c > 0 and H >= 128:
+            #     print(f"{i} with {j}:", c, "/", H*W, "=", c/(H*W))
+            #     plt_display(features, i, j, sampled_features, valid_inds)
+            #     input()
 
     # Divide by count to average each pixel after sum aggregation
     new_out = new_out / counts
@@ -135,38 +133,42 @@ def enforce_view_consistency(_m, _i, features: torch.Tensor) -> torch.Tensor:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    # TODO proper args
+    parser = argparse.ArgumentParser(description="Panorama generation using BigGAN.")
 
-    truncation = 1.0
-    model_dtype = torch.float16  # default to fp16
+    parser.add_argument("-n", "--num_generations", type=int, default=4, help="Number of panoramas to generate.")
+    parser.add_argument("-o", "--outdir", type=str, default="out/panorama", help="Directory to save outputs. Will be saved as [ctr].png for the least value of [ctr] which does not exist.")
+    parser.add_argument("-m", "--biggan_model", type=str, default="biggan-deep-256", choices=["biggan-deep-128", "biggan-deep-256", "biggan-deep-512"])
+    parser.add_argument("--z_mul", type=float, default=1., help="Latent vector multiplier for silly abstract results (greater than 1, for example 3, will produce interesting but nonsensical images).")
+    parser.add_argument("--class_mul", type=float, default=1., help="Class multiplier (see z_mul description).")
+    parser.add_argument("--truncation", type=float, default=0.5, help="Truncation value (see BigGAN paper).")
+    parser.add_argument("--model_dtype", type=str, choices=["float16", "float32"], default="float16",
+                        help="Model data type.")
+    parser.add_argument("--panorama_width", type=int, default=2000)
+    parser.add_argument("--panorama_height", type=int, default=1000)
+    parser.add_argument("--share_class", action="store_true", help="Share class across all gens inside each panorama.")
+    parser.add_argument("--no_share_z", dest="share_z", action="store_false", help="Do not share z across all gens inside each panorama.")
+    parser.set_defaults(share_z=True)
+    parser.add_argument("--visualise_point_cloud", action="store_true", help="Visualise panorama as a point cloud, with overlaps from the multiple generations. Requires open3d to be installed.")
+    parser.add_argument("--class_names", type=str, default=None, help="Optional list of ImageNet class names to use. Separate with the '|' character. E.g. 'coral reef|tank'.")
+    parser.add_argument("--start_layer", type=int, default=2, help="Start layer for hook injection (0 to 12).")
+    parser.add_argument("--end_layer", type=int, default=7, help="End layer for hook injection (0 to 12).")
 
-    num_generations = 32
-    z_mul = 1  # range 1 to 5
-    class_mul = 1  # range 0 to 5
-    panorama_width = 2000
-    panorama_height = 1000
+    args = parser.parse_args()
 
-    biggan_model = 'biggan-deep-256'
+    class_names = args.class_names.split("|") if args.class_names is not None else None
 
-    model = BigGAN.from_pretrained(biggan_model).to(device, dtype=model_dtype)
+    model_dtype = torch.float16 if args.model_dtype == "float16" else torch.float32
+
+    print(f"[Info] Loading {args.biggan_model} with dtype = {args.model_dtype}")
+    model = BigGAN.from_pretrained(args.biggan_model).to(device, dtype=model_dtype)
     model.eval()
     model.requires_grad_(False)
 
-    share_class = False  # same class within each panorama
-    share_z = True  # same latent z within each panorama
-    visualise_point_cloud = False
-
-    class_names = None  # add an option to make this a list of strings
-
-    outdir = "out/panorama"
     ctr = 0
-    while os.path.exists(join(outdir, f"{ctr}.png")):
+    while os.path.exists(join(args.outdir, f"{ctr}.png")):
         ctr += 1
 
-    start_layer = 2 # todo arg
-    end_layer = 7 # todo arg
-    for i in range(start_layer, end_layer + 1):
+    for i in range(args.start_layer, args.end_layer + 1):
         model.generator.layers[i].register_forward_hook(enforce_view_consistency)
 
     # Prepare weight mask to lerp between 3D views on the panorama
@@ -176,44 +178,45 @@ if __name__ == "__main__":
     xs, ys = (xs - 0.5)*2, (ys - 0.5)*2  # [-1, 1]
     weight = np.minimum(1 - np.abs(xs), 1 - np.abs(ys))
 
-    for repeat in range(num_generations):
-        z = torch.from_numpy(truncated_noise_sample(truncation=truncation, batch_size=B)).to(device)
+    for repeat in range(args.num_generations):
+        z = torch.from_numpy(truncated_noise_sample(truncation=args.truncation, batch_size=B)).to(device)
 
         if class_names is not None:
             name = class_names[repeat % len(class_names)]
+            print(f"[Info] Using class name '{name}' for this panorama (for all gens)")
             classes = torch.tensor(one_hot_from_names(name, batch_size=B), device=device)
         else:
-            classes = torch.nn.functional.one_hot(torch.randint(0, 1000, (B,)), num_classes=1000).float().to(device)
+            classes = torch.nn.functional.one_hot(torch.randint(0, 1000, (B,)), num_classes=model.config.num_classes).float().to(device)
 
-        z = z * z_mul
-        classes = classes * class_mul
+        z = z * args.z_mul
+        classes = classes * args.class_mul
 
         for j in range(1, B):
-            if share_class: classes[j] = classes[0]
-            if share_z: z[j] = z[0]
+            if args.share_class: classes[j] = classes[0]
+            if args.share_z: z[j] = z[0]
 
-        print(f"[Info] Generating {B} images with {biggan_model}... (iteration {repeat+1} / {num_generations})")
-        out = model(z.to(model_dtype), classes.to(model_dtype), truncation)
+        print(f"[Info] Generating {B} images with {args.biggan_model}... (iteration {repeat+1} / {args.num_generations})")
+        out = model(z.to(model_dtype), classes.to(model_dtype), args.truncation)
         print("[Info] Generation complete! ")
 
         print("[Info] Computing panorama...")
         numpy_image_arr = [np.array(trf.to_pil_image(out[i].clamp(0, 1))) for i in range(B)]
         pose_arr = [(fov, azimuth, elevation) for azimuth, elevation in zip(azimuths, elevations)]
         mp = MultiPerspectiveWeighted(numpy_image_arr, [weight] * B, pose_arr)
-        img = mp.GetEquirec(panorama_height, panorama_width)
+        img = mp.GetEquirec(args.panorama_height, args.panorama_width)
 
-        save_path = join(outdir, f"{ctr}.png")
+        save_path = join(args.outdir, f"{ctr}.png")
         print(f"[Info] Saving to {save_path}")
         img = Image.fromarray((np.clip(img, 0, 255)).astype(np.uint8))
         img.save(save_path)
         ctr += 1
 
-        if visualise_point_cloud:
+        if args.visualise_point_cloud:
             print("[Info] Visualising point cloud...")
             # Reshape Bx3xHxW -> BxNx3
             colors = torch.permute(out, (0, 2, 3, 1)).reshape(B, -1, 3)  # list of point cloud colours
             # Reshape positions to Nx4 for each
-            positions = [i.reshape(-1, 4) for i in get_3d_points(B, size, size, device)]
+            positions = [i.reshape(-1, 4) for i in get_3d_points(size, size)]
             visualise_point_clouds(positions, colors)
 
         gc.collect()
