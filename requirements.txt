@@ -1,0 +1,8 @@
+pytorch_pretrained_biggan
+torch
+torchvision
+Pillow
+numpy
+argparse
+opencv-python
+matplotlib
