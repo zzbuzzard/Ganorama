@@ -3,7 +3,7 @@
     <img src="assets/example.gif" width="90%"/>
 </p>
 
-Zero-shot panorama / seamless sphere texture generation with pre-trained GANs!
+Zero-shot panorama / seamless sphere texture / large image generation with pre-trained GANs!
 
 ## About
 This project uses BigGAN to generate seamless images on the surface of a sphere,
@@ -14,15 +14,15 @@ There is also `bigimg.py`, which is a script for generating large (flat) images 
 
 <details> <summary>How it works!</summary>
 This project is inspired by various (generally diffusion based) panorama generation papers,
-such as MVDiffusion, which generate multiple overlapping images in parallel, with some operation to enforce/encourage
-multi-view consistency.
+such as MVDiffusion, which generate multiple overlapping images in parallel but enforce/encourage
+consistency between them.
 
 The method can be summarised as:
 1. Create N camera poses, with some overlap, covering the entire surface of the sphere.
-2. Begin generation of N arbitrary GAN images (as one batch), where each one corresponds to one view.
-3. For each *intermediate result* of shape (N x C x H x W),
+2. Begin generation of N arbitrary GAN images (as one batch), where each batch item corresponds to a camera pose.
+3. For each *intermediate result* in the GAN network of shape (N x C x H x W),
    1. Project all features into 3D (using the corresponding camera poses)
-   2. For each pair of features (i, j), project j's features into the view space of camera i
+   2. For each pair of features (i, j), project j's features into the local space of camera i
    3. Average each latent feature across all corresponding latent features in other views
 4. Convert the views to an equirectangular image, using distance-based weighting to slightly smooth between the images.
 
@@ -31,8 +31,9 @@ The method can be summarised as:
 </p>
 (Example image showing feature 1 being projected to feature 0's camera space, where it will be summed with existing features at the positions indicated by the mask. This is then repeated for every other feature overlapping with features[0].)
 
+
 This operation, if applied at every intermediate stage, _guarantees_ multi-view consistency
-between the N outputs (any point in 3D has identical features across all N generations).
+between the N outputs (any point in 3D has identical features across all N generations, as each equals the average).
 However, in practice, sharp lines show up where overlaps occur, so
 I only apply the operation at some intermediate layers of the GAN, then apply some smoothing at the end.
 
